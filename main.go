@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -14,6 +16,11 @@ type TokenBasedRateLimiter struct {
 	mu          sync.Mutex
 }
 
+type Connection struct {
+	conn       net.Conn
+	canProceed bool
+}
+
 func NewTokenRateLimiter(redisArr, redisPassword string) *TokenBasedRateLimiter {
 	return &TokenBasedRateLimiter{
 		redisClient: redis.NewClient(&redis.Options{
@@ -21,6 +28,12 @@ func NewTokenRateLimiter(redisArr, redisPassword string) *TokenBasedRateLimiter 
 			Password: redisPassword,
 			DB:       0,
 		}),
+	}
+}
+
+func MakeConnection(conn net.Conn) *Connection {
+	return &Connection{
+		conn: conn,
 	}
 }
 
@@ -34,11 +47,13 @@ func (trl *TokenBasedRateLimiter) handleRequest(userID string) (bool, error) {
 
 	trl.mu.Lock()
 	tokenExists, err := trl.redisClient.Exists(ctx, tokenKey).Result()
+
+	fmt.Println("token exists: ", tokenExists)
 	if err != nil {
 		return false, err
 	}
 
-	if tokenExists == 0 {
+	if tokenExists <= 0 {
 		newToken := userID
 		if err := trl.redisClient.Set(ctx, newToken, 1, 1*time.Minute).Err(); err != nil {
 			return false, err
@@ -53,7 +68,7 @@ func (trl *TokenBasedRateLimiter) handleRequest(userID string) (bool, error) {
 		return false, err
 	}
 
-	if counter > 100 {
+	if counter > 2 {
 		logger.Error("Too many requests...")
 		return false, nil
 	}
@@ -62,44 +77,58 @@ func (trl *TokenBasedRateLimiter) handleRequest(userID string) (bool, error) {
 }
 
 func main() {
-
 	var wg sync.WaitGroup
-	redisAddr := "localhost:49153"
-	redisPassword := "redispw"
-	tokenBasedRateLimiter := NewTokenRateLimiter(redisAddr, redisPassword)
-	ch := make(chan bool)
 
-	for i := 1; i <= 1000; i++ {
-		userID := "user456"
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	listener, err := net.Listen("tcp", ":8080")
 
-			canProceed, err := tokenBasedRateLimiter.handleRequest(userID)
-
-			if err != nil {
-
-				logger.Error(err)
-				return
-			}
-
-			ch <- canProceed
-
-		}()
+	if err != nil {
+		logger.Error(err)
 	}
 
-	go func() {
-		defer close(ch)
-		wg.Wait()
-	}()
+	ch := make(chan *Connection)
+	defer close(ch)
 
-	for canProceed := range ch {
-		if canProceed {
+	for {
 
-			logger.Info("Request Allowed.")
-		} else {
-			logger.Error("Request is not Allowed")
+		conn, err := listener.Accept()
+
+		if err != nil {
+			logger.Error(err)
 		}
+		c := MakeConnection(conn)
+
+		go func(conn net.Conn) {
+			wg.Add(1)
+
+			defer wg.Done()
+			redisAddr := "localhost:49153"
+			redisPassword := "redispw"
+			userID := "user123"
+			tokenBasedRateLimiter := NewTokenRateLimiter(redisAddr, redisPassword)
+			canProceed, err := tokenBasedRateLimiter.handleRequest(userID)
+			if err != nil {
+				logger.Error(err)
+			}
+
+			c.canProceed = canProceed
+			ch <- c
+
+		}(conn)
+
+		go func() {
+			for c := range ch {
+				if c.canProceed {
+					// pass the request to the backend service
+					logger.Info("Request Allowed.")
+
+				} else {
+					c.conn.Write([]byte("Request Not Allowed"))
+					c.conn.Close()
+					logger.Error("Request is not Allowed")
+				}
+			}
+		}()
+
 	}
 
 }
