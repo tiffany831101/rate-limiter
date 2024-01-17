@@ -1,8 +1,9 @@
 package main
 
 import (
+	"context"
 	"net"
-	"rate_limiter/token"
+	"rate_limiter/bucket"
 	"sync"
 
 	"github.com/hdt3213/godis/lib/logger"
@@ -31,6 +32,13 @@ func main() {
 	ch := make(chan *Connection)
 	defer close(ch)
 
+	redisAddr := "localhost:49153"
+	redisPassword := "redispw"
+	key := "shared_bucket"
+
+	bucketRL := bucket.NewSharedBucketRateLimiter(redisAddr, redisPassword, 0, 10)
+	go bucketRL.AddTokenBackgroundProcess(key)
+
 	for {
 
 		conn, err := listener.Accept()
@@ -44,11 +52,14 @@ func main() {
 			wg.Add(1)
 
 			defer wg.Done()
-			redisAddr := "localhost:49153"
-			redisPassword := "redispw"
-			userID := "user123"
-			tokenBasedRateLimiter := token.NewTokenRateLimiter(redisAddr, redisPassword)
-			canProceed, err := tokenBasedRateLimiter.HandleRequest(userID)
+
+			ctx := context.Background()
+			canProceed, err := bucketRL.HandleRequest(ctx, key)
+
+			// userID := "user123"
+			// tokenBasedRateLimiter := token.NewTokenRateLimiter(redisAddr, redisPassword)
+			// canProceed, err := tokenBasedRateLimiter.HandleRequest(userID)
+
 			if err != nil {
 				logger.Error(err)
 			}
