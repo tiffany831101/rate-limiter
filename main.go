@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"net"
-	"rate_limiter/bucket"
+	slidingWindow "rate_limiter/sliding_window"
 	"sync"
 
 	"github.com/hdt3213/godis/lib/logger"
@@ -34,10 +34,14 @@ func main() {
 
 	redisAddr := "localhost:49153"
 	redisPassword := "redispw"
-	key := "shared_bucket"
+	// key := "shared_bucket"
+	key := "sliding_window"
 
-	bucketRL := bucket.NewSharedBucketRateLimiter(redisAddr, redisPassword, 0, 10)
-	go bucketRL.AddTokenBackgroundProcess(key)
+	// bucketRL := bucket.NewSharedBucketRateLimiter(redisAddr, redisPassword, 0, 10)
+
+	slidingWindow := slidingWindow.NewSlidingWindow(redisAddr, redisPassword, 3)
+
+	// go bucketRL.AddTokenBackgroundProcess(key)
 
 	for {
 
@@ -54,8 +58,9 @@ func main() {
 			defer wg.Done()
 
 			ctx := context.Background()
-			canProceed, err := bucketRL.HandleRequest(ctx, key)
+			// canProceed, err := bucketRL.HandleRequest(ctx, key)
 
+			canProceed, err := slidingWindow.HandleRequest(ctx, key)
 			// userID := "user123"
 			// tokenBasedRateLimiter := token.NewTokenRateLimiter(redisAddr, redisPassword)
 			// canProceed, err := tokenBasedRateLimiter.HandleRequest(userID)
@@ -73,6 +78,7 @@ func main() {
 			for c := range ch {
 				if c.canProceed {
 					// pass the request to the backend service
+					c.conn.Write([]byte("Request allowed..."))
 					logger.Info("Request Allowed.")
 
 				} else {
