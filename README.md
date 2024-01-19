@@ -13,7 +13,7 @@ Rate Limiter is a simple implementation of two rate-limiting strategies:
    - Requests are served if there are available tokens in the bucket.
 
 3. **Sliding Window**
-  - Utilize a Redis sorted set to store timestamps(as score) of requests.
+   - Utilize a Redis sorted set to store timestamps(as score) of requests.
    - Periodically check the set to analyze the timestamps within the desired time window (e.g., the last N seconds).
    - Adjust the set by removing timestamps outside the time window.
    - Calculate the count of remaining timestamps within the window to track the rate of requests.
